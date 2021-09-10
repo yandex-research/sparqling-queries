@@ -1,0 +1,68 @@
+
+module Break
+{       
+    -- comparative_ops: ('>', '<', '>=', '<=', '!=', 'like')
+    comparative_ops = Gt
+         | Lt
+         | Ge
+         | Le
+         | Ne
+         | Like
+
+    -- superlative ops: ('min', 'max')
+    superlative_ops = Min | Max
+    superlative_op_type = SupOp(superlative_ops superlative_ops)
+                         | SupUnknownOp
+
+    order = Asc | Desc
+
+     -- UNIT_OPS: ('-', '+', "*", '/')
+    unit_ops = Minus | Plus | Times | Divide
+
+    agg_ops = Count | Sum | Avg | MinAgg | MaxAgg 
+    -- column grounding if exists
+    agg_type = AggOp(agg_ops agg_ops) | UseColumn(grounding grounding)
+
+    comp_val = CompGrounding(grounding grounding) | CompRef(ref ref) 
+    comp_op_type = CompOp(comparative_ops comparative_ops) 
+                | NoOp
+                | UnknownOp
+                
+    -- column grounding if exists
+    column_type = ColumnGrounding(grounding grounding) | NoColumnGrounding | UnknownColumnGrounding
+    comparative_3arg_type = CompArg(comp_op_type comp_op_type, column_type column_type, comp_val comp_val) 
+                         | NoneCompArg
+
+    project_1arg = GroundingProjectArg(grounding grounding) | NoneProjectArg
+    union_3arg = RefArg(ref ref) | NoneUnionArg
+
+    -- qdmr operations
+    select = (is_distinct is_distinct, grounding grounding, step step)
+    aggregate = (agg_type agg_type, ref ref, step step)
+    project = (is_distinct is_distinct, project_1arg project_1arg, ref ref, step step)
+    comparative = (is_distinct is_distinct, ref ref1, ref ref2, comparative_3arg_type comparative_3arg_type, step step)
+    superlative = (superlative_op_type superlative_op_type, ref ref1, ref ref2, step step)
+    intersection = (ref ref1, ref ref2, union_3arg union_3arg, step step)
+    discard = (ref ref1, ref ref2, step step)
+    sort = (ref ref1, ref ref2, order order, step step)
+    group = (agg_type agg_type, ref ref1, ref ref2, step step)
+    union = (ref ref1, ref ref2, union_3arg union_3arg, union_3arg union_4arg, step step)
+    arithmetic = (unit_ops unit_ops, ref ref1, ref ref2, step step)
+
+    is_distinct = True | False
+
+    root = (step step)
+
+    step = NextStepSelect(select select) 
+            | NextStepAgg(aggregate aggregate) 
+            | NextStepProject(project project)
+            | NextStepUnion(union union) 
+            | NextStepComp(comparative comparative)
+            | NextStepSup(superlative superlative)
+            | NextStepIntersect(intersection intersection)
+            | NextStepDiscard(discard discard)
+            | NextStepSort(sort sort)
+            | NextStepGroup(group group)
+            | NextStepArithmetic(arithmetic arithmetic)
+            | FinalStep
+}

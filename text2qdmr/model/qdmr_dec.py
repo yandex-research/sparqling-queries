@@ -1058,33 +1058,46 @@ class BreakDecoder(torch.nn.Module):
 
         if not is_train and step_history is not None:
             if node_type in ['comp_op_type', 'column_type', 'superlative_op_type']:
-                # if values set is empty - we should not choose comp op or comp column
                 is_comparative = node_type in ['comp_op_type', 'column_type'] 
-                not_values = is_comparative and self.no_vals
+
+
+                is_filter = False
+                col_type_match = True
 
                 if is_comparative:
                     # check ref1 == ref2 - then filter, else comparative
                     refs = [idx for rule, idx in step_history if rule == 'ref']
                     assert len(refs) == 2, refs
                     is_filter = refs[0] == refs[1]
-                    lhs_val_type = set([grnd.data_type for grnd in grounding[refs[1]]])
-                    req_col = all([val_type not in self.val_types_wo_cols for val_type in lhs_val_type])
-                    required_column = self.required_column or req_col
-                else:
-                    is_filter, required_column = False, False
+                    has_comp_op = any([idx for rule, idx in step_history if rule == 'CompOp'])
 
-                has_comp_op = any([idx for rule, idx in step_history if rule == 'CompOp'])
-                # Eq is NoOp, so if not is_filter, then comp op is NoOp=Eq
-                has_comp_op = has_comp_op or (not is_filter) 
+
+                    lhs_val_type = set([grnd.data_type for grnd in grounding[refs[1]]])
+                    if self.val_types_wo_cols:
+                        assert lhs_val_type, lhs_val_type
+                        col_type_match = len(self.val_types_wo_cols.intersection(lhs_val_type)) != 0
+                        # if filter and no_column - should be NoOp (and NoColGrnd because of no_column) -> tbls, cols
+                        # if filter and not no_column - should be ColGrnd if CompOp -> tbls, cols if NoOp or val+col if CompOp  or NoOp and ColGrnd
+                        # if comp and no_column - can be NoOp/CompOp (and NoColGrnd because of no_column) -> ref
+                        # if comp and not no_column - if CompOp, ColGrnd -> val + col
+                        #                           - if NoOp, ColGrnd -> val + col
+                        #                           - if NoOp/CompOp, NoColGrnd -> ref
 
                 # remove unknown rules
                 check_unknown = lambda end_node: end_node.find('Unknown') >= 0 
-                # if no values, do not predict comp op and column
-                check_no_values = lambda end_node: not_values and (end_node == 'CompOp' or end_node == 'ColumnGrounding') 
-                # if comp op and all values with column, column prediction is necessary 
-                check_required_column = lambda end_node: required_column and has_comp_op and end_node == 'NoColumnGrounding' 
+                # if no values, do not predict column, do not predict comp op in filter
+                check_no_values = lambda end_node: self.no_vals \
+                                                    and (end_node == 'ColumnGrounding' or is_filter and end_node == 'CompOp')
+                # if all values with column, column prediction is necessary in filter with comp_op
+                check_required_column = lambda end_node: is_filter and has_comp_op and self.required_column \
+                                                        and end_node == 'NoColumnGrounding' 
                 # if all values without column, no_column prediction is necessary 
                 check_no_column = lambda end_node: self.no_column and end_node == 'ColumnGrounding' 
+                # if types of ref columns and values wo columns are different and is filter:
+                # if no_column - should be NoOp, otherwise - should be ColGrnd if CompOp
+                check_col_type_match = lambda end_node: is_filter and not col_type_match \
+                                                    and (self.no_column and end_node == 'CompOp' \
+                                                    or not self.no_column and has_comp_op and end_node == 'NoColumnGrounding')
 
                 indices = []
                 logprobs = []
@@ -1093,25 +1106,38 @@ class BreakDecoder(torch.nn.Module):
                         continue
                     assert start_node == node_type, (start_node, node_type)
                     if check_unknown(end_node) or check_no_values(end_node) or \
-                        check_required_column(end_node) or check_no_column(end_node):
+                        check_required_column(end_node) or check_no_column(end_node) or check_col_type_match(end_node):
                         continue
         
                     indices.append(idx)
                     logprobs.append(rule_logprobs[0, idx])
 
-                assert not not_values or not_values and len(indices) == 1
+                assert not is_comparative or not self.no_vals \
+                    or self.no_vals and (len(indices) == 1 or node_type != 'column_type'), (self.no_vals, node_type)
 
                 logprobs = torch.stack(logprobs)
                 return list(zip(indices, logprobs))
         
             if node_type == 'comp_val':
                 # comp_val = CompGrounding(grounding grounding) | CompRef(ref ref) 
-                # do not allow ref grounding after column prediction or without comp_op
-                idx = self.rules_index[('comp_op_type', 'NoOp')]
-                no_ref = any([r for r, i in step_history if r == 'ColumnGrounding'])
-                
-                if no_ref:
+
+                refs = [idx for rule, idx in step_history if rule == 'ref']
+                assert len(refs) == 2, refs
+                is_filter = refs[0] == refs[1]
+                lhs_val_type = set([grnd.data_type for grnd in grounding[refs[1]]])
+
+                # do not allow ref grounding after column prediction or if it is filter
+                col_grnd = any([r for r, i in step_history if r == 'ColumnGrounding']) 
+                if col_grnd or is_filter:
                     rules_end -= 1
+
+                 # if not filter and no values or NoColumnGrounding prediction with all values+columns, 
+                 # or NoColumnGrounding prediction while types of ref columns and values wo columns are different 
+                 # do not allow comp grounding
+                if not is_filter and (self.no_vals or not col_grnd and (self.required_column \
+                    or self.val_types_wo_cols and not self.val_types_wo_cols.intersection(lhs_val_type))):
+                    rules_start += 1
+                assert rules_start < rules_end, (rules_start, rules_end)
 
         # TODO: Mask other probabilities first?
         return list(zip(

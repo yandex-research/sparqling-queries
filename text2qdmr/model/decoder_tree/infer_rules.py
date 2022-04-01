@@ -53,10 +53,7 @@ def get_comp_grnd_probs(model, pointer_logprobs, step_history, grounding):
     refs = [idx for rule, idx in step_history if rule == 'ref']
     assert len(refs) == 2, refs
     is_filter = refs[0] == refs[1]
-
     lhs_val_type = set([grnd.data_type for grnd in grounding[refs[1]]])
-
-    has_comp_op = any([idx for rule, idx in step_history if rule == 'CompOp'])
 
     # find column grounding and type of this column
     col_name, val_type = None, None
@@ -69,49 +66,32 @@ def get_comp_grnd_probs(model, pointer_logprobs, step_history, grounding):
             break
 
     has_column = val_type is not None
+    has_comp_op = any([idx for rule, idx in step_history if rule == 'CompOp'])
 
-    if has_comp_op:
-        for idx, grnd_choice in model.ids_to_grounding_choices.items():
-            if grnd_choice.choice_type == 'value':
-                assert pointer_logprobs[idx][0] == idx
-                if has_column:
-                    # choose values with correct type
-                    for val_unit in grnd_choice.choice:
-                        if val_unit.value_type == val_type and val_unit.column is None \
-                            or val_unit.column == col_name and val_unit.table == tbl_name:
-                            keep_pointer_logprobs.append(pointer_logprobs[idx])
-                            break
-                else:
-                    # choose values without column
-                    for val_unit in grnd_choice.choice:
-                        if val_unit.column is None and val_unit.value_type in lhs_val_type:
-                            keep_pointer_logprobs.append(pointer_logprobs[idx]) 
-    else:
-        for idx, grnd_choice in model.ids_to_grounding_choices.items():
-            if grnd_choice.choice_type == 'value':
-                assert pointer_logprobs[idx][0] == idx
-                if has_column:
-                    # choose values with correct type
-                    for val_unit in grnd_choice.choice:
-                        if val_unit.value_type == val_type and val_unit.column is None \
+    for idx, grnd_choice in model.ids_to_grounding_choices.items():
+        if grnd_choice.choice_type == 'value':
+            assert pointer_logprobs[idx][0] == idx
+            if has_column:
+                # choose values with correct type
+                for val_unit in grnd_choice.choice:
+                    if val_unit.value_type == val_type and val_unit.column is None \
                         or val_unit.column == col_name and val_unit.table == tbl_name:
-                            keep_pointer_logprobs.append(pointer_logprobs[idx])
-                            break
-                else:
-                    # choose values without column
-                    for val_unit in grnd_choice.choice:
-                        if val_unit.column is None and val_unit.value_type in lhs_val_type:
-                            keep_pointer_logprobs.append(pointer_logprobs[idx]) 
-            elif not has_column and is_filter:
-                keep_pointer_logprobs.append(pointer_logprobs[idx]) 
-    
+                        keep_pointer_logprobs.append(pointer_logprobs[idx])
+                        break
+            else:
+                # choose values without column
+                for val_unit in grnd_choice.choice:
+                    if val_unit.column is None and val_unit.value_type in lhs_val_type:
+                        keep_pointer_logprobs.append(pointer_logprobs[idx]) 
+        elif not has_column and not has_comp_op and is_filter:
+            keep_pointer_logprobs.append(pointer_logprobs[idx]) 
+
     assert keep_pointer_logprobs, (model.ids_to_grounding_choices, val_type, col_name)
     return keep_pointer_logprobs
 
 def get_comp_refs(ref_logprobs, count_steps, step_history, grounding):
      # Filter CompRef in comparative (3 arg)
     assert len(grounding) == (count_steps - 1), (grounding, count_steps)
-    keep_pointer_logprobs = []
 
     refs = [idx for rule, idx in step_history if rule == 'ref']
     assert len(refs) == 2, refs

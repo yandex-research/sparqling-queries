@@ -112,26 +112,27 @@ class Inferer:
             model.decoder.no_vals = len(model.decoder.value_unit_dict) == 0
 
             model.decoder.required_column = False
+            model.decoder.value_columns = set()
+            model.decoder.val_types_wo_cols = set()
+            model.decoder.no_column = False
             if not model.decoder.no_vals:
                 model.decoder.no_column, model.decoder.required_column = True, True
                 for val_units in model.decoder.value_unit_dict.values():
                     model.decoder.required_column = model.decoder.required_column and all(val_unit.column for val_unit in val_units)
 
-            model.decoder.value_columns = set()
-            model.decoder.val_types_wo_cols = set()
-            for grnd_choice in model.decoder.ids_to_grounding_choices.values():
-                if grnd_choice.choice_type == 'value':
-                    for val_unit in grnd_choice.choice:
-                        if val_unit.column:
-                            model.decoder.value_columns.add((val_unit.table, val_unit.column))
-                        else:
-                            model.decoder.val_types_wo_cols.add(val_unit.value_type)
-            for table in model.decoder.column_data.keys():
-                for column, col_type in model.decoder.column_data[table].items():
-                    if col_type in model.decoder.val_types_wo_cols:
-                        model.decoder.value_columns.add((table, column))
+                for grnd_choice in model.decoder.ids_to_grounding_choices.values():
+                    if grnd_choice.choice_type == 'value':
+                        for val_unit in grnd_choice.choice:
+                            if val_unit.column:
+                                model.decoder.value_columns.add((val_unit.table, val_unit.column))
+                            else:
+                                model.decoder.val_types_wo_cols.add(val_unit.value_type)
+                for table in model.decoder.column_data.keys():
+                    for column, col_type in model.decoder.column_data[table].items():
+                        if col_type in model.decoder.val_types_wo_cols:
+                            model.decoder.value_columns.add((table, column))
 
-            model.decoder.no_column = len(model.decoder.value_columns) == 0
+                model.decoder.no_column = len(model.decoder.value_columns) == 0
         else:
             model.decoder.column_data = None
 

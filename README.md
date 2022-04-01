@@ -2,7 +2,7 @@
 
 This repo is the implementation of the following paper:
 
-[SPARQLing Database Queries from Intermediate Question Decompositions](https://arxiv.org/pdf/2109.06162.pdf)<br>
+SPARQLing Database Queries from Intermediate Question Decompositions<br>
 Irina Saparina and Anton Osokin<br>
 To appear in proceedings of EMNLP'21
 
@@ -19,7 +19,12 @@ conda activate env-torch1.9
 
 Download some nltk resourses, Bert and GraPPa:
 ``` bash
+mkdir -p third_party
+
+pip install -r requirements.txt && \
+pip install entmax && \
 python -c "import nltk; nltk.download('stopwords'); nltk.download('punkt')"
+
 python -c "from transformers import AutoModel; AutoModel.from_pretrained('bert-large-uncased-whole-word-masking'); AutoModel.from_pretrained('Salesforce/grappa_large_jnt')"
 
 mkdir -p third_party && \

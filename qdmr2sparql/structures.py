@@ -4,7 +4,6 @@ import json
 import ast
 import sqlite3
 import re
-import unittest
 import glob
 import attr
 import urllib
@@ -15,7 +14,7 @@ from rdflib.namespace import XSD
 from dateutil import parser as date_parser
 
 from qdmr2sparql.process_sql import get_sql as parse_sql_spider
-from qdmr2sparql.process_sql import AGG_OPS, SchemaFromSpider
+from qdmr2sparql.process_sql import AGG_OPS, SchemaFromSpider, parsed_sql_has_superlative
 
 
 def prepare_dict_for_json(d):
@@ -138,74 +137,12 @@ def load_grounding_from_file(grounding_path, data=None):
     return grounding
 
 
-def convert_results_to_str(from_sql, from_sparql):
-    res_sql, res_sparql = [], []
-
-    for sql_line, sparql_line in zip(from_sql, from_sparql):
-        sql_new, sparql_new = [], []
-        for sql_entry, sparql_entry in zip(sql_line, sparql_line):
-            if is_date_sparql_entry(sparql_entry):
-                sql_entry = parse_date_str(sql_entry)
-                sparql_entry = parse_date_str(sparql_entry)
-            else:
-                try: # round float
-                    sparql_entry_tmp = '{0:.3f}'.format(float(sparql_entry))
-                    sql_entry_tmp = '{0:.3f}'.format(float(sql_entry))
-                    sparql_entry = sparql_entry_tmp
-                    sql_entry = sql_entry_tmp
-                except:
-                    sparql_entry = str(sparql_entry)
-                    sql_entry = str(sql_entry)
-
-            sql_new.append(sql_entry)
-            sparql_new.append(sparql_entry)
-        res_sql.append(sql_new)
-        res_sparql.append(sparql_new)
-
-    return res_sql, res_sparql
-
-
-def is_date_sparql_entry(sparql_entry):
-    if type(sparql_entry) != rdflib.Literal:
-        return False
-    if sparql_entry.datatype in\
-        [rdflib.term.URIRef('http://www.w3.org/2001/XMLSchema#date'), rdflib.term.URIRef('http://www.w3.org/2001/XMLSchema#dateTime')]:
-        return True
-    else:
-        return False
-
-
 def parse_date_str(s, default_date=date_parser.parse("0001-01-01 00:00:00")):
     try:
         date_object = date_parser.parse(str(s), fuzzy=True, default=default_date)
         return date_object.strftime("%Y-%m-%dT%H:%M:%S")
     except:
         return str(s)
-
-
-def check_result_size(correct, output, test=None):
-    if test is None:
-        test = unittest.TestCase()
-    test.assertEqual(len(correct), len(output), f"Output length should be the same in output and the correct answer") #, output: {output}, correct: {correct}
-    for i_row, (cor, out) in enumerate(zip(correct, output)):
-        test.assertEqual(len(cor), len(out), f"Row {i_row} should be the same in output and the correct answer, output: {out}, correct: {cor}")
-
-
-def compare_results(correct, output, ordered=False, test=None):
-    if test is None:
-        test = unittest.TestCase()
-
-    check_result_size(correct, output, test)
-
-    correct, output = convert_results_to_str(correct, output)
-
-    if not ordered:
-        correct = sorted(correct)
-        output = sorted(output)
-
-    for i_row, (cor, out) in enumerate(zip(correct, output)):
-        for i_step, (c, o) in enumerate(zip(cor, out)):
-            test.assertEqual(str(c), str(o), f"Row {i_row}, item {i_step} should be the same in output and the correct answer, output: {out}, correct: {cor}")
 
 
 class GroundingIndex():
@@ -1033,6 +970,7 @@ class QueryToRdf:
     query = attr.ib()
     output_cols = attr.ib()
     sorting_info = attr.ib(default=None)
+    query_has_superlative = attr.ib(default=False)
 
 @attr.s
 class QueryResult:
@@ -1041,6 +979,8 @@ class QueryResult:
     data = attr.ib()
     sorting_info = attr.ib(default=None)
     maxmin_via_limit = attr.ib(default=False)
+    limit = attr.ib(default=None)
+    query_has_superlative = attr.ib(default=False)
 
     @classmethod
     def convert_to_python_type(cls, col_value, schema_type):
@@ -1192,8 +1132,8 @@ class QueryResult:
                     elem = str(r)
 
             col_type = schema.type_for_column_for_table[col.grounding_column.get_tbl_name()][col.grounding_column.get_col_name()]
-            if col.aggregator != "none":
-                col_type = "FLOAT" # converting all numeric types to float
+            if col.aggregator == "count":
+                col_type = "FLOAT" # converting counts to float
 
             elem = cls.convert_to_python_type(elem, col_type)
             return elem
@@ -1238,6 +1178,9 @@ class QueryResult:
                              output_cols=output_cols,
                              data=data,
                              sorting_info=query.sorting_info)
+
+        # check for query_has_superlative for the WeakArgMax comparison mode
+        result.query_has_superlative = query.query_has_superlative
         return result
 
     @classmethod
@@ -1312,8 +1255,8 @@ class QueryResult:
                     row.append(elem)
                     continue
                 col_type = schema.type_for_column_for_table[col.grounding_column.get_tbl_name()][col.grounding_column.get_col_name()]
-                if col.aggregator != "none":
-                    col_type = "FLOAT" # converting all numeric types to float
+                if col.aggregator == "count":
+                    col_type = "FLOAT" # converting counts to float
 
                 elem = cls.convert_to_python_type(elem, col_type)
                 row.append(elem)
@@ -1323,10 +1266,12 @@ class QueryResult:
         result = QueryResult(source_type="SQL",
                              output_cols=result_cols,
                              data=data_python_types)
-        if "limit" in sql_query_parsed_from_spider and\
-            sql_query_parsed_from_spider["limit"] == 1 and "orderBy" in sql_query_parsed_from_spider and\
-            len(data_python_types) == 1:
-            result.maxmin_via_limit = True
+        if sql_query_parsed_from_spider.get("limit") and sql_query_parsed_from_spider.get("orderBy"):
+            result.limit = sql_query_parsed_from_spider["limit"]
+            result.maxmin_via_limit = (result.limit == 1)
+
+        if result.maxmin_via_limit or parsed_sql_has_superlative(sql_query_parsed_from_spider, schema):
+            result.query_has_superlative = True
 
         return result
 
@@ -1428,12 +1373,8 @@ class QueryResult:
             return out(False, f"Different number of columns: {len(self.output_cols)} and {len(other.output_cols)}")
         num_cols = len(self.output_cols)
 
-        # check for the number of rows
-        if len(self.data) != len(other.data) and not (weak_mode_argmax and other.maxmin_via_limit):
-            return out(False, f"Different number of rows: {len(self.data)} and {len(other.data)}")
-        num_rows = len(self.data)
-
         # match columns
+        num_rows = len(self.data)
         if not require_column_order or num_rows == 0:
             # matchs columns for empty outputs as well to avoid some spurious matches
             matched, matching_other_for_self = self.match_column_names(self.output_cols, other.output_cols, require_column_order=require_column_order)
@@ -1449,37 +1390,52 @@ class QueryResult:
             other_data.append(tuple(new_row))
         self_data = copy.deepcopy(self.data)
 
-        if weak_mode_argmax and other.maxmin_via_limit:
-            # special case for the pattern "ORDER BY ... DESC LIMIT 1" is SQL that implement
-            assert len(other_data) == 1, f"Something went wrong: have other.maxmin_via_limit={other.maxmin_via_limit} but len(other_data)={len(other_data)}"
-            other_row = other_data[0]
-            for i_row, A in enumerate(self_data):
-                row_found = True
-                for a, b in zip(A, other_row):
-                    if a != b:
-                        row_found = False
-                        break
-                if row_found:
-                    return out(True, f"OK - special mode for for orderBy ... limit 1")
-            return out(False, f"Could not find row {other_row} in {self_data}")
-
-
-        def compare_values(a, b, float_relative_precision=1e-5):
-            if isinstance(a, float) or isinstance(b, float):
-                # run floating point comparison
-                try:
-                    diff = abs(a - b)
-                    if diff == 0:
-                        return True
-                    max_abs = max(abs(a), abs(b))
-                    if max_abs == 0:
-                        return False
+        def compare_values(a, b, float_relative_precision=1e-3):
+            # try floating point comparison
+            try:
+                a_float = float(a)
+                b_float = float(b)
+                diff = abs(a_float - b_float)
+                max_abs = max(abs(a_float), abs(b_float))
+                if max_abs < float_relative_precision:
+                    return diff < float_relative_precision
+                else:
                     return diff / max_abs < float_relative_precision
-                except:
-                    return False
-            else:
+            except:
                 return a == b
 
+        if weak_mode_argmax and other.maxmin_via_limit:
+            # special case for the pattern "ORDER BY ... DESC LIMIT 1" in SQL that implements argmax
+            assert other.limit == 1, f"Something went wrong: have other.limit={other.limit} but len(other_data)={len(other_data)}"
+
+            if self.limit is not None and self.limit != other.limit:
+                return out(False, f"Different limits: {other.limit} and {self.limit}")
+            
+            if not self.query_has_superlative:
+                # In the WeakArgmaxMode, the other query should have a superlative op otherwise fallback to the reqular result checking  
+                pass
+            else:
+                if len(other_data) == 1:
+                    other_row = other_data[0]
+                    for i_row, A in enumerate(self_data):
+                        row_found = True
+                        for a, b in zip(A, other_row):
+                            if not compare_values(a, b):
+                                row_found = False
+                                break
+                        if row_found:
+                            return out(True, f"OK - special mode for for orderBy ... limit 1")
+                    return out(False, f"Could not find row {other_row} in {self_data}")
+                else:
+                    assert len(other_data) == 0, f"Something is wrong, len(other_data) should be 0 but have {len(other_data)}"
+                    if len(self_data) == 0:
+                        return out(True, "Equal")
+                    else:
+                        return out(False, f"other.data is of len {len(other_data)} but self.data is of len {len(self_data)}")
+
+        # check for the number of rows
+        if len(self.data) != len(other.data):
+            return out(False, f"Different number of rows: {len(self.data)} and {len(other.data)}")
 
         if not require_row_order:
             # sort rows if do not need order
@@ -1488,8 +1444,12 @@ class QueryResult:
 
             # compare elements
             for i_row, (A, B) in enumerate(zip(self_data, other_data)):
-                for i_step, (a, b) in enumerate(zip(A, B)):                
-                    if not compare_values(a, b):
+                for i_step, (a, b) in enumerate(zip(A, B)):
+                    if b == "NULL" and other.output_cols[i_step].aggregator != "none":
+                        # special case for aggregators over empty sets: SQL produces "NULL", but SPARQL produces other things
+                        if a not in ["NULL", "None", 0.0, 0]:
+                            return out(False, f"Row {i_row}, item {i_step} should be the same in the answers: {A}, {B}")
+                    elif not compare_values(a, b):
                         return out(False, f"Row {i_row}, item {i_step} should be the same in the answers: {A}, {B}")
         elif self.sorting_info is None:
             # compare elements directly

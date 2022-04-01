@@ -1846,6 +1846,25 @@ class QueryCreator():
         query = QueryToRdf(query=context.query,
                            output_cols=[u.output_col for u in context.output_units_for_qdmr_index[qdmr_index]],
                            sorting_info=context.sorting_info)
+        
+        # check for query_has_superlative for the WeakArgMax comparison mode
+        for i_op, (op, args) in enumerate(qdmr):
+            if op == "superlative":
+                # catch superlative directly
+                # comparative with the min/max arg is also caught because of
+                # qdmr_cleanup_change_comparative_to_superlative called in self.cleanup_qdmr
+                query.query_has_superlative = True
+            if op == "comparative":
+                # catch comparative with equality where the argument is qdmr_ref to the aggregate op
+                grnd_ind = GroundingIndex(i_op, 2, args[2])
+                if grounding.get(grnd_ind) and grounding[grnd_ind].iscomp():
+                    grnd = grounding[grnd_ind]
+                    if (grnd.keys[0] == "=") and (len(grnd.keys) > 1) and (QdmrInstance.is_good_qdmr_ref(grnd.keys[1])):
+                        ref_ind = QdmrInstance.ref_to_index(grnd.keys[1])
+                        ref_op, ref_args = qdmr[ref_ind]
+                        if ref_op == "aggregate" and ref_args[0].lower() in ["min", "max"]:
+                            query.query_has_superlative = True
+                            
         return query
 
     def construct_set_of_args(self, qdmr_target_indices, inline_query, context=None):

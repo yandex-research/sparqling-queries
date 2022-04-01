@@ -1,8 +1,5 @@
 import os
-import ast
 import unittest
-import time
-import attr
 from timeout_decorator import timeout
 
 import textwrap
@@ -399,6 +396,7 @@ class TestSelectFilter(unittest.TestCase):
             }""")
         correct_sparql_query = QueryToRdf(query=correct_sparql_query,
             output_cols=[OutputColumnId.from_grounding(GroundingKey.make_column_grounding("singer", "Name"))])
+        correct_sparql_query.query_has_superlative = True
 
         qdmr = QdmrInstance(["select", "filter"], [["names"], ["#1", "the youngest"]])
         grounding = { GroundingIndex(0,0,"names") : GroundingKey.make_column_grounding("singer", "Name"),
@@ -1184,6 +1182,7 @@ class TestSqlWithNonUniqueArgmax(unittest.TestCase):
         correct_sparql_query = QueryToRdf(query=correct_sparql_query,
             output_cols=[OutputColumnId.from_grounding(GroundingKey.make_column_grounding("concert", "concert_Name")),
                          OutputColumnId.from_grounding(GroundingKey.make_column_grounding("concert", "Year"))])
+        correct_sparql_query.query_has_superlative = True
 
         result_correct = QueryResult.execute_query_sql(sql_query, schema)
         result = QueryResult.execute_query_to_rdf(correct_sparql_query, rdf_graph, schema, virtuoso_server=VIRTUOSO_SPARQL_SERVICE)
@@ -2967,6 +2966,7 @@ class TestSpiderDev132(unittest.TestCase):
         correct_sparql_query = QueryToRdf(query=correct_sparql_query,
             output_cols=[OutputColumnId.add_aggregator(OutputColumnId.from_grounding(GroundingKey.make_column_grounding("cars_data", "Horsepower")), "max"),
                          OutputColumnId.from_grounding(GroundingKey.make_column_grounding("car_names", "Make"))])
+        correct_sparql_query.query_has_superlative = True
 
         qdmr = get_qdmr_from_break(split_name, i_query)
         # break_program:
@@ -3094,6 +3094,7 @@ class TestSpiderDev132(unittest.TestCase):
         correct_sparql_query = QueryToRdf(query=correct_sparql_query,
             output_cols=[OutputColumnId.add_aggregator(OutputColumnId.from_grounding(GroundingKey.make_column_grounding("cars_data", "Horsepower")), "max"),
                          OutputColumnId.from_grounding(GroundingKey.make_column_grounding("car_names", "Make"))])
+        correct_sparql_query.query_has_superlative = True
 
         qdmr = get_qdmr_from_break(split_name, i_query)
         # break_program:
@@ -3650,6 +3651,7 @@ class TestSpiderDev159(unittest.TestCase):
             }""")
         correct_sparql_query = QueryToRdf(query=correct_sparql_query,
             output_cols=[OutputColumnId.add_aggregator(OutputColumnId.from_grounding(GroundingKey.make_table_grounding("cars_data"), schema), "count")])
+        correct_sparql_query.query_has_superlative = True
 
         qdmr = get_qdmr_from_break(split_name, i_query)
         # break_program:
@@ -4797,6 +4799,239 @@ class TestSpiderTrain4320(unittest.TestCase):
 #                                     require_row_order=True,
 #                                     return_message=True)
 #         self.assertTrue(equal, message)
+
+
+class TestSql2SqlLimits(unittest.TestCase):
+
+    @timeout(ONE_TEST_TIMEOUT)
+    def test_dog_bug(self):
+        db_id = "dog_kennels"
+        split_name = "dev"
+        
+        rdf_graph, schema = get_graph_and_schema(split_name, db_id)
+        
+        sql_query_1 = "SELECT max(age) FROM Dogs"
+        sql_query_2 = "SELECT Dogs.age FROM Dogs ORDER BY Dogs.age DESC LIMIT 1"
+
+        result_1 = QueryResult.execute_query_sql(sql_query_1, schema)
+        result_2 = QueryResult.execute_query_sql(sql_query_2, schema)
+
+        equal, message = result_1.is_equal_to(result_2,
+                                              require_column_order=False,
+                                              require_row_order=False,
+                                              weak_mode_argmax=True,
+                                              return_message=True)
+        self.assertTrue(equal, message)
+
+    @timeout(ONE_TEST_TIMEOUT)
+    def test_limits(self):
+        db_id = "dog_kennels"
+        split_name = "dev"
+
+        rdf_graph, schema = get_graph_and_schema(split_name, db_id)
+        
+        sql_query_1 = "SELECT Dogs.age FROM Dogs ORDER BY Dogs.age DESC LIMIT 1"
+        sql_query_2 = "SELECT Dogs.age FROM Dogs ORDER BY Dogs.age DESC LIMIT 2"
+
+        result_1 = QueryResult.execute_query_sql(sql_query_1, schema)
+        result_2 = QueryResult.execute_query_sql(sql_query_2, schema)
+
+        equal, message = result_1.is_equal_to(result_2,
+                                              require_column_order=False,
+                                              require_row_order=False,
+                                              weak_mode_argmax=True,
+                                              return_message=True)
+        self.assertTrue(not equal, message)
+
+        equal, message = result_2.is_equal_to(result_1,
+                                              require_column_order=False,
+                                              require_row_order=False,
+                                              weak_mode_argmax=True,
+                                              return_message=True)
+        self.assertTrue(not equal, message)
+
+
+class TestWeakArgMaxMode(unittest.TestCase):
+
+    @timeout(ONE_TEST_TIMEOUT)
+    def test_sql2sql(self):
+        db_id = "concert_singer"
+        split_name = "dev"
+        rdf_graph, schema = get_graph_and_schema(split_name, db_id)
+        
+        sql_query_1 = "SELECT concert_Name, Year FROM concert ORDER BY Year ASC LIMIT 1"
+        sql_query_2 = "SELECT concert_Name, Year FROM concert"
+        sql_query_3 = "SELECT concert_Name, Year FROM concert where Year = (SELECT Year FROM concert ORDER BY Year ASC LIMIT 1)"
+        sql_query_4 = "SELECT concert_Name, Year FROM concert where Year = (SELECT min(Year) FROM concert)"
+
+        result_1 = QueryResult.execute_query_sql(sql_query_1, schema)
+        result_2 = QueryResult.execute_query_sql(sql_query_2, schema)
+        result_3 = QueryResult.execute_query_sql(sql_query_3, schema)
+        result_4 = QueryResult.execute_query_sql(sql_query_4, schema)
+
+        equal, message = result_1.is_equal_to(result_2,
+                                              require_column_order=False,
+                                              require_row_order=False,
+                                              weak_mode_argmax=True,
+                                              return_message=True)
+        self.assertTrue(not equal, message)
+
+        equal, message = result_1.is_equal_to(result_3,
+                                              require_column_order=False,
+                                              require_row_order=False,
+                                              weak_mode_argmax=True,
+                                              return_message=True)
+        self.assertTrue(equal, message)
+
+        equal, message = result_1.is_equal_to(result_4,
+                                              require_column_order=False,
+                                              require_row_order=False,
+                                              weak_mode_argmax=True,
+                                              return_message=True)
+        self.assertTrue(equal, message)
+
+    @timeout(ONE_TEST_TIMEOUT)
+    def test_qdmr2sql(self):
+        db_id = "concert_singer"
+        split_name = "dev"
+        rdf_graph, schema = get_graph_and_schema(split_name, db_id)
+
+        sql_query = "SELECT concert_Name, Year FROM concert ORDER BY Year ASC LIMIT 1"
+        result_sql = QueryResult.execute_query_sql(sql_query, schema)
+        
+        qdmr_0 = QdmrInstance(["select", "project", "union"],
+                              [["concert_Name"],
+                              ["Year", "#1"],
+                              ["#1", "#2"],
+                             ])
+        grounding_0 = { GroundingIndex(0,0,"concert_Name") : GroundingKey.make_column_grounding("concert", "concert_Name"),
+                        GroundingIndex(1,0,"Year") : GroundingKey.make_column_grounding("concert", "Year"),
+                      }
+
+        sparql_query_0 = create_sparql_query_from_qdmr(qdmr_0, schema, rdf_graph, grounding_0)
+
+        result_qdmr_0 = QueryResult.execute_query_to_rdf(sparql_query_0, rdf_graph, schema, virtuoso_server=VIRTUOSO_SPARQL_SERVICE)
+
+        equal, message = result_sql.is_equal_to(result_qdmr_0,
+                                                require_column_order=False,
+                                                require_row_order=False,
+                                                weak_mode_argmax=True,
+                                                return_message=True)
+        self.assertTrue(not equal, message)
+
+
+        qdmr_1 = QdmrInstance(["select", "project", "superlative", "union"],
+                              [["concert_Name"],
+                              ["Year", "#1"],
+                              ["min", "#1", "#2"],
+                              ["#3", "#2"],
+                             ])
+        grounding_1 = { GroundingIndex(0,0,"concert_Name") : GroundingKey.make_column_grounding("concert", "concert_Name"),
+                        GroundingIndex(1,0,"Year") : GroundingKey.make_column_grounding("concert", "Year"),
+                        GroundingIndex(2,0,"min") : GroundingKey.make_comparative_grounding("min", None),
+                      }
+
+        sparql_query_1 = create_sparql_query_from_qdmr(qdmr_1, schema, rdf_graph, grounding_1)
+
+        result_qdmr_1 = QueryResult.execute_query_to_rdf(sparql_query_1, rdf_graph, schema, virtuoso_server=VIRTUOSO_SPARQL_SERVICE)
+
+        equal, message = result_sql.is_equal_to(result_qdmr_1,
+                                                require_column_order=False,
+                                                require_row_order=False,
+                                                weak_mode_argmax=True,
+                                                return_message=True)
+        self.assertTrue(equal, message)
+
+
+        qdmr_2 = QdmrInstance(["select", "project", "comparative", "union"],
+                              [["concert_Name"],
+                              ["Year", "#1"],
+                              ["#1", "#2", "min"],
+                              ["#3", "#2"],
+                             ])
+        grounding_2 = { GroundingIndex(0,0,"concert_Name") : GroundingKey.make_column_grounding("concert", "concert_Name"),
+                        GroundingIndex(1,0,"Year") : GroundingKey.make_column_grounding("concert", "Year"),
+                        GroundingIndex(2,2,"min") : GroundingKey.make_comparative_grounding("min", None),
+                      }
+
+        sparql_query_2 = create_sparql_query_from_qdmr(qdmr_2, schema, rdf_graph, grounding_2)
+
+        result_qdmr_2 = QueryResult.execute_query_to_rdf(sparql_query_2, rdf_graph, schema, virtuoso_server=VIRTUOSO_SPARQL_SERVICE)
+
+        equal, message = result_sql.is_equal_to(result_qdmr_2,
+                                                require_column_order=False,
+                                                require_row_order=False,
+                                                weak_mode_argmax=True,
+                                                return_message=True)
+        self.assertTrue(equal, message)
+
+
+        qdmr_3 = QdmrInstance(["select", "project", "aggregate", "comparative", "union"],
+                              [["concert_Name"],
+                              ["Year", "#1"],
+                              ["min", "#2"],
+                              ["#1", "#2", "=min"],
+                              ["#4", "#2"],
+                             ])
+        grounding_3 = { GroundingIndex(0,0,"concert_Name") : GroundingKey.make_column_grounding("concert", "concert_Name"),
+                        GroundingIndex(1,0,"Year") : GroundingKey.make_column_grounding("concert", "Year"),
+                        GroundingIndex(3,2,"=min") : GroundingKey.make_comparative_grounding("=", "#3"),
+                      }
+
+        sparql_query_3 = create_sparql_query_from_qdmr(qdmr_3, schema, rdf_graph, grounding_3)
+
+        result_qdmr_3 = QueryResult.execute_query_to_rdf(sparql_query_3, rdf_graph, schema, virtuoso_server=VIRTUOSO_SPARQL_SERVICE)
+
+        equal, message = result_sql.is_equal_to(result_qdmr_3,
+                                                require_column_order=False,
+                                                require_row_order=False,
+                                                weak_mode_argmax=True,
+                                                return_message=True)
+        self.assertTrue(equal, message)
+
+
+class TestTimeToTimeComparison(unittest.TestCase):
+
+    @timeout(ONE_TEST_TIMEOUT)
+    def test_sql2sql(self):
+        db_id = "voter_1"
+        split_name = "dev"
+        rdf_graph, schema = get_graph_and_schema(split_name, db_id)
+        
+        sql_query_1 = "SELECT max(created) FROM votes WHERE state  =  'CA'"
+        sql_query_2 = 'SELECT VOTES.created FROM VOTES WHERE VOTES.state = "CA" ORDER BY VOTES.created DESC LIMIT 1'
+
+        result_1 = QueryResult.execute_query_sql(sql_query_1, schema)
+        result_2 = QueryResult.execute_query_sql(sql_query_2, schema)
+
+        equal, message = result_1.is_equal_to(result_2,
+                                              require_column_order=False,
+                                              require_row_order=False,
+                                              weak_mode_argmax=True,
+                                              return_message=True)
+        self.assertTrue(equal, message)
+
+
+class TestWta1(unittest.TestCase):
+
+    @timeout(ONE_TEST_TIMEOUT)
+    def test_sql2sql(self):
+        db_id = "wta_1"
+        split_name = "dev"
+        rdf_graph, schema = get_graph_and_schema(split_name, db_id)
+        
+        sql_query_1 = "SELECT first_name ,  last_name FROM players ORDER BY birth_date"
+        sql_query_2 = "SELECT players.first_name , players.last_name FROM players ORDER BY players.birth_date ASC"
+
+        result_1 = QueryResult.execute_query_sql(sql_query_1, schema)
+        result_2 = QueryResult.execute_query_sql(sql_query_2, schema)
+
+        equal, message = result_1.is_equal_to(result_2,
+                                              require_column_order=False,
+                                              require_row_order=False,
+                                              weak_mode_argmax=True,
+                                              return_message=True)
+        self.assertTrue(equal, message)
 
 
 if __name__ == '__main__':

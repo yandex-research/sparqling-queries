@@ -919,3 +919,19 @@ def replace_orderByLimit1_to_subquery(sql_query, column_names):
         return sql_query_mod
     except:
         return sql_query
+
+
+def parsed_sql_has_superlative(sql_query_parsed_from_spider, schema):
+    if sql_query_parsed_from_spider.get("limit") == 1 and sql_query_parsed_from_spider.get("orderBy"):
+        return True
+
+    for cond in sql_query_parsed_from_spider["where"]:
+        if isinstance(cond, tuple) and WHERE_OPS[cond[1]] == "=" and isinstance(cond[3], dict):
+            if parsed_sql_has_superlative(cond[3], schema):
+                return True
+            subquery_select_list = cond[3]["select"][1]
+            for item in subquery_select_list:
+                if AGG_OPS[item[0]] in ["min", "max"]:
+                    return True
+    
+    return False

@@ -20,14 +20,14 @@
 ################################
 
 from __future__ import print_function
-import os, sys
+import os
 import json
 import sqlite3
-import traceback
 import argparse
 
-from qdmr2sparql.process_sql import tokenize, get_schema, get_tables_with_alias, Schema, get_sql
-from qdmr2sparql.structures import compare_results
+from qdmr2sparql.process_sql import get_schema, Schema, get_sql
+from qdmr2sparql.datasets import DatabaseSchema
+from qdmr2sparql.structures import QueryResult
 
 # Flag to disable value evaluation
 DISABLE_VALUE = True
@@ -481,7 +481,7 @@ def print_scores(scores, etype):
             print("{:20} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f} {:<20.3f}".format(type_, *this_scores))
 
 
-def evaluate(gold, predict, db_dir, etype, kmaps):
+def evaluate(gold, predict, db_dir, etype, kmaps, table):
     with open(gold) as f:
         glist = [l.strip().split('\t') for l in f.readlines() if len(l.strip()) > 0]
 
@@ -505,6 +505,9 @@ def evaluate(gold, predict, db_dir, etype, kmaps):
             scores[level]['partial'][type_] = {'acc': 0., 'rec': 0., 'f1': 0.,'acc_count':0,'rec_count':0}
 
     eval_err_num = 0
+    database_schemas = {}
+    db_id_table = {item['db_id']: item for item in json.load(open(table))}
+
     for p, g in zip(plist, glist):
         p_str = p[0]
         g_str, db = g
@@ -557,7 +560,11 @@ def evaluate(gold, predict, db_dir, etype, kmaps):
                 scores['all']['exec'] += 1.0
 
         if etype in ["all", "custom-exec"]:
-            exec_score = custom_eval_exec_match(db, p_str, g_str, p_sql, g_sql)
+            if db_name not in database_schemas:
+                database_schema = DatabaseSchema(db_id_table[db_name])
+                database_schema.load_table_data(db_dir)
+                database_schemas[db_name] = database_schema
+            exec_score = custom_eval_exec_match(database_schemas[db_name], p_str, g_str, p_sql, g_sql)
             if exec_score:
                 scores[hardness]['custom-exec'] += 1.0
                 scores['all']['custom-exec'] += 1.0
@@ -566,10 +573,6 @@ def evaluate(gold, predict, db_dir, etype, kmaps):
         if etype in ["all", "match"]:
             exact_score = evaluator.eval_exact_match(p_sql, g_sql)
             partial_scores = evaluator.partial_scores
-            if exact_score == 0:
-                print("{} pred: {}".format(hardness,p_str))
-                print("{} gold: {}".format(hardness,g_str))
-                print("")
             scores[hardness]['exact'] += exact_score
             scores['all']['exact'] += exact_score
             for type_ in partial_types:
@@ -656,24 +659,18 @@ def eval_exec_match(db, p_str, g_str, pred, gold):
     return res_map(p_res, p_val_units) == res_map(q_res, q_val_units)
 
 
-def custom_eval_exec_match(db, p_str, g_str, pred, gold):
-    conn = sqlite3.connect(db)
-    conn.text_factory = lambda b: b.decode(errors = 'ignore')
-    cursor = conn.cursor()
-    try:
-        cursor.execute(p_str)
-        p_res = cursor.fetchall()
-    except:
-        return False
-
-    cursor.execute(g_str)
-    q_res = cursor.fetchall()
-
-    ordered = True if gold['orderBy'] else False
+def custom_eval_exec_match(database_schema, p_str, g_str, pred, gold):
+    ordered = True if gold.get('orderBy') else False
 
     try:
-        compare_results(q_res, p_res, ordered=ordered)
-        got_correct_answer = True
+        result = QueryResult.execute_query_sql(p_str, database_schema)
+        reference_result = QueryResult.execute_query_sql(g_str, database_schema)
+
+        got_correct_answer, _ = result.is_equal_to(reference_result,
+            require_column_order=False,
+            require_row_order=ordered,
+            weak_mode_argmax=True,
+            return_message=True)
     except Exception as e:
         got_correct_answer = False
 
@@ -905,4 +902,4 @@ if __name__ == "__main__":
 
     kmaps = build_foreign_key_map_from_json(table)
 
-    evaluate(gold, pred, db_dir, etype, kmaps)
+    evaluate(gold, pred, db_dir, etype, kmaps, table)

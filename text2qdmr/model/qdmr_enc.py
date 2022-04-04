@@ -308,11 +308,13 @@ class BreakFullEncoderBertPreproc(abstract_preproc.AbstractPreproc):
         
         self.config = AutoConfig.from_pretrained(self.pretrained_modelname)
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.pretrained_modelname)
+            # add add_prefix_space=True to better deal with the Roberta tokenizers
+            # otherwise there will be no special symbol chr(288) at the beginnings of words
+            self.tokenizer = AutoTokenizer.from_pretrained(self.pretrained_modelname, add_prefix_space=True)
         except Exception as e:
             print("WARNING: could not run the tokenizer normally, seeing this error:", e)
             print("Trying to run with local_files_only=True")
-            self.tokenizer = AutoTokenizer.from_pretrained(self.pretrained_modelname, local_files_only=True)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.pretrained_modelname, local_files_only=True, add_prefix_space=True)
 
         # TODO: should get types from the data
         column_types = ["text", "number", "time", "boolean", "others"]
@@ -1621,7 +1623,10 @@ class Robertatokens:
     def normalize_toks(self):
         new_toks = []
         for i, j in zip(range(len(self.idx_map)), range(1, len(self.idx_map))):
-            new_toks.append(''.join(self.pieces[self.idx_map[i]:self.idx_map[j]]))
+            pieces_cur = self.pieces[self.idx_map[i]:self.idx_map[j]]
+            # remove the special symbol chr(288) added by the Roberta tokenizer to indicate new words
+            pieces_cur = [tok.lstrip(chr(288)) for tok in pieces_cur]
+            new_toks.append(''.join(pieces_cur))
 
         # lemmatize "abc"
         normalized_toks = []

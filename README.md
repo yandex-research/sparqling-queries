@@ -6,7 +6,7 @@ SPARQLing Database Queries from Intermediate Question Decompositions<br>
 Irina Saparina and Anton Osokin<br>
 In proceedings of EMNLP'21
 
-`[31.05.2022]:` **We fixed several bugs in the decoding process, usage of the GraPPa tokenization (affect our model) and SQL-SQL comparison (affect on baselines). The current code reproduces the results from the updated version of the paper.**
+`[31.05.2022]:` **We fixed several bugs in the decoding process, usage of the GraPPa tokenization (affect our model) and SQL-SQL comparison (affect on baselines). The current code reproduces the results from the updated version of the paper ([arXiv:2109.06162v2](https://arxiv.org/abs/2109.06162v2)).**
 
 ## License
 This software is released under the [MIT license](./LICENSE), which means that you can use the code in any way you want.
@@ -73,8 +73,8 @@ Checkpoints of our best models:
 
 | Model name  | Dev | Test | Config | Link |
 | ----------- | ----------- | ----------- | ----------- | ----------- |
-| grappa-aug        | **82.0**   | 62.4 | [text2qdmr/configs/eval-checkpoints/grappa_qdmr_aug.jsonnet](text2qdmr/configs/eval-checkpoints/grappa_qdmr_aug.jsonnet) | https://drive.google.com/file/d/1xfTxIYlqJ1G-tSrgyI7h20hTE5_we-jy/view?usp=sharing |
-| grappa-full_break-aug | 81.6   | **65.3** | [text2qdmr/configs/eval-checkpoints/grappa_full_break_aug.jsonnet](text2qdmr/configs/eval-checkpoints/grappa_full_break_aug.jsonnet)  | https://drive.google.com/file/d/1wwAZGr6d6v_gP_mMcOaUZEk_A1qX2z0H/view?usp=sharing |
+| grappa-aug        | **82.0**   | 62.4 | [text2qdmr/configs/eval-checkpoints/grappa_qdmr_aug.jsonnet](text2qdmr/configs/eval-checkpoints/grappa_qdmr_aug.jsonnet) | [Google Drive](https://drive.google.com/file/d/1xfTxIYlqJ1G-tSrgyI7h20hTE5_we-jy/view?usp=sharing) |
+| grappa-full_break-aug | 81.6   | **65.3** | [text2qdmr/configs/eval-checkpoints/grappa_full_break_aug.jsonnet](text2qdmr/configs/eval-checkpoints/grappa_full_break_aug.jsonnet)  | [Google Drive](https://drive.google.com/file/d/1wwAZGr6d6v_gP_mMcOaUZEk_A1qX2z0H/view?usp=sharing) |
 
 To reproduce, firstly download the checkpoints and put them into new folders:
 ``` bash
